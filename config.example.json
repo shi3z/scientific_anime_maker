@@ -1,0 +1,9 @@
+{
+  "llm": {
+    "url": "http://YOUR-LLM-HOST:8101/v1/chat/completions",
+    "key": "YOUR-API-KEY",
+    "model": "deepseek-v4.1-flash"
+  },
+  "port": 8777,
+  "hires": 4
+}

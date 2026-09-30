@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="ja">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Anim Studio</title>
+<style>
+  :root {
+    --bg: #0d0c15; --panel: #16141f; --panel2: #1d1a29; --line: #2f2b45; --ink: #e9e6f7; --ink2: #a9a4c6; --ink3: #6f6a92;
+    --gold: #f0b43c; --pass: #39c3a4; --fail: #e2483d; --warn: #e3a13c; --blue: #4d7bd8;
+    --mono: ui-monospace, "SFMono-Regular", Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.6 "Hiragino Sans", "Noto Sans CJK JP", system-ui, sans-serif; }
+  header { padding: 14px 20px; border-bottom: 1px solid var(--line); display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+  header h1 { margin: 0; font-size: 18px; color: var(--gold); letter-spacing: .04em; }
+  header p { margin: 0; color: var(--ink2); font-size: 13px; }
+  main { display: grid; grid-template-columns: 340px minmax(0, 1fr); gap: 16px; padding: 16px 20px; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 14px; }
+  h2 { font-size: 13px; margin: 0 0 10px; color: var(--ink2); letter-spacing: .06em; }
+  label { display: block; font-size: 12px; color: var(--ink2); margin: 10px 0 4px; }
+  input, textarea { width: 100%; background: var(--bg); color: var(--ink); border: 1px solid var(--line); border-radius: 4px; padding: 7px 9px; font: inherit; }
+  textarea { min-height: 110px; resize: vertical; }
+  .row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  button { background: var(--panel2); color: var(--ink); border: 1px solid var(--line); border-radius: 4px; padding: 7px 14px; font: inherit; cursor: pointer; }
+  button.primary { background: var(--gold); color: #1a1206; border-color: var(--gold); font-weight: 700; width: 100%; margin-top: 14px; }
+  button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
+  details { margin-top: 10px; } summary { cursor: pointer; color: var(--ink2); font-size: 12px; }
+  .left { display: grid; gap: 16px; align-content: start; }
+  .jobs { display: grid; gap: 6px; max-height: 50vh; overflow: auto; }
+  .job { padding: 8px 10px; border: 1px solid var(--line); border-radius: 4px; cursor: pointer; background: var(--panel2); }
+  .job.sel { border-color: var(--gold); }
+  .job .t { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .job .s { font-size: 12px; color: var(--ink2); }
+  .pill { display: inline-block; font-size: 11px; padding: 0 7px; border-radius: 9px; border: 1px solid currentColor; margin-right: 6px; }
+  .st-running, .st-queued { color: var(--blue); } .st-done { color: var(--pass); } .st-done_with_issues { color: var(--warn); }
+  .st-error, .st-stopped { color: var(--fail); }
+  .detail { display: grid; gap: 16px; align-content: start; }
+  .head { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  .head h2 { margin: 0; font-size: 16px; color: var(--ink); letter-spacing: 0; }
+  .meta { color: var(--ink2); font-size: 12px; }
+  .grid2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+  @media (max-width: 1200px) { .grid2 { grid-template-columns: 1fr; } }
+  table { border-collapse: collapse; font-size: 12px; }
+  th, td { border: 1px solid var(--line); padding: 4px 8px; text-align: center; font-variant-numeric: tabular-nums; }
+  th { color: var(--ink2); font-weight: 400; background: var(--panel2); }
+  td.cell { cursor: pointer; font-weight: 700; min-width: 44px; }
+  td.pass { color: var(--pass); } td.fail { color: var(--fail); } td.cur { outline: 2px solid var(--gold); outline-offset: -2px; }
+  .scroll { overflow-x: auto; }
+  .issue h3 { font-size: 13px; margin: 0 0 6px; }
+  .issue ul { margin: 4px 0 10px; padding-left: 18px; } .issue li { margin: 2px 0; }
+  .issue .k { font-size: 12px; color: var(--ink3); }
+  img.sheet { width: 100%; image-rendering: pixelated; border: 1px solid var(--line); display: block; }
+  iframe { width: 100%; aspect-ratio: 16 / 12; border: 1px solid var(--line); background: #0b0a13; }
+  img.gif { max-width: 100%; image-rendering: pixelated; border: 1px solid var(--line); }
+  pre.log { margin: 0; max-height: 260px; overflow: auto; font: 12px/1.5 var(--mono); color: var(--ink2); white-space: pre-wrap; }
+  .empty { color: var(--ink3); padding: 40px; text-align: center; }
+  a { color: var(--gold); }
+</style>
+
+<header>
+  <h1>Anim Studio</h1>
+  <p>LLM（既定は DeepSeek）が教材アニメーションを作り、自分で出来を判定して、全場面が合格するまで作り直します。</p>
+</header>
+
+<main>
+  <div class="left">
+    <section>
+      <h2>新しいアニメーション</h2>
+      <form id="f">
+        <label for="topic">テーマ</label>
+        <input id="topic" required placeholder="例: フーリエ変換で音を周波数に分ける">
+        <label for="details">内容・要望（場面の流れなど。空欄ならおまかせ）</label>
+        <textarea id="details" placeholder="1. 音は波の重ね合わせ&#10;2. …"></textarea>
+        <label for="title">GIF の題名（字幕帯の見出し）</label>
+        <input id="title" placeholder="例: フーリエ変換">
+        <div class="row">
+          <div><label for="scenes">場面数</label><input id="scenes" type="number" min="2" max="12" value="6"></div>
+          <div><label for="seconds">合計秒数</label><input id="seconds" type="number" min="10" max="180" value="45"></div>
+          <div><label for="max_iter">最大回数</label><input id="max_iter" type="number" min="1" max="30" value="8"></div>
+        </div>
+        <details>
+          <summary>接続設定（空欄なら config.json の値）</summary>
+          <label for="url">エンドポイント</label><input id="url" placeholder="">
+          <label for="model">モデル</label><input id="model" placeholder="">
+          <label for="key">API キー</label><input id="key" type="password" placeholder="既定値を使う">
+        </details>
+        <button class="primary" type="submit">作り始める</button>
+        <div class="meta" id="msg"></div>
+      </form>
+    </section>
+    <section>
+      <h2>ジョブ</h2>
+      <div class="jobs" id="jobs"><div class="meta">まだありません</div></div>
+    </section>
+  </div>
+
+  <div class="detail" id="detail"><section class="empty">左でテーマを入れて「作り始める」を押すか、ジョブを選んでください。</section></div>
+</main>
+
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const STATUS = { queued: '待機中', running: '実行中', done: '完了（全場面合格）', done_with_issues: '終了（未合格あり）', error: 'エラー', stopped: '停止' };
+let sel = null, selCell = null, lastSheet = '', lastPreviewKey = '';
+
+fetch('/api/config').then(r => r.json()).then(c => { $('#url').placeholder = c.url; $('#model').placeholder = c.model; });
+
+$('#f').addEventListener('submit', async e => {
+  e.preventDefault();
+  const body = {};
+  ['topic', 'details', 'title', 'scenes', 'seconds', 'max_iter', 'url', 'model', 'key'].forEach(k => body[k] = $('#' + k).value);
+  const r = await fetch('/api/jobs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const j = await r.json();
+  if (!r.ok) { $('#msg').textContent = j.error; return; }
+  $('#msg').textContent = '受け付けました';
+  sel = j.id; selCell = null; lastSheet = lastPreviewKey = '';
+  loadJobs(); loadDetail();
+});
+
+async function loadJobs() {
+  const list = await (await fetch('/api/jobs')).json();
+  if (!list.length) return;
+  $('#jobs').innerHTML = list.map(j => `<div class="job ${j.id === sel ? 'sel' : ''}" data-id="${j.id}">
+    <div class="t">${esc(j.title)}</div>
+    <div class="s"><span class="pill st-${j.status}">${STATUS[j.status] || j.status}</span>${j.iterations ? `${j.iterations}回目` : '準備中'} ${j.total ? `・合格 ${j.passed}/${j.total}` : ''}</div></div>`).join('');
+  document.querySelectorAll('.job').forEach(el => el.onclick = () => { sel = el.dataset.id; selCell = null; lastSheet = lastPreviewKey = ''; loadJobs(); loadDetail(); });
+}
+
+function cellHtml(r, it, i) {
+  const cur = selCell && selCell[0] === it && selCell[1] === i ? ' cur' : '';
+  return `<td class="cell ${r.verdict === 'PASS' ? 'pass' : 'fail'}${cur}" data-it="${it}" data-i="${i}" title="クリックで判定理由">${r.verdict === 'PASS' ? '合格' : '×'} ${r.score}</td>`;
+}
+
+async function loadDetail() {
+  if (!sel) return;
+  const s = await (await fetch('/api/jobs/' + sel)).json();
+  const its = s.iterations || [];
+  const maxScenes = Math.max(0, ...its.map(x => x.scenes.length));
+  const running = s.status === 'running' || s.status === 'queued';
+  const files = s.files || {};
+  if (!selCell && its.length) {
+    // 既定では最新の回の最初の不合格場面を表示
+    const last = its[its.length - 1];
+    const fi = last.scenes.findIndex(r => r.verdict !== 'PASS');
+    if (last.scenes.length) selCell = [its.length - 1, fi < 0 ? 0 : fi];
+  }
+  const table = its.length ? `<div class="scroll"><table>
+    <tr><th>回</th><th>自動検査</th>${Array.from({ length: maxScenes }, (_, i) => `<th>場面${i}</th>`).join('')}</tr>
+    ${its.map((x, it) => `<tr><th>${x.n}</th><td class="${x.lint_ok ? 'pass' : 'fail'}">${x.note ? esc(x.note) : x.lint_ok ? 'OK' : 'NG'}</td>
+      ${x.scenes.map((r, i) => cellHtml(r, it, i)).join('')}</tr>`).join('')}
+  </table></div>` : '<div class="meta">まだ判定がありません</div>';
+
+  let issue = '';
+  if (selCell && its[selCell[0]] && its[selCell[0]].scenes[selCell[1]]) {
+    const r = its[selCell[0]].scenes[selCell[1]];
+    issue = `<div class="issue"><h3>${its[selCell[0]].n}回目・場面${selCell[1]}：${r.verdict === 'PASS' ? '合格' : '不合格'}（${r.score}点）</h3>
+      <div class="k">確定した問題</div><ul>${r.issues.length ? r.issues.map(x => `<li>${esc(x)}</li>`).join('') : '<li>なし</li>'}</ul>
+      ${(r.checks || []).length ? `<div class="k">確認項目（こうなっているはず）</div><ul>${r.checks.map(c => `<li><b style="color:${c.ok ? 'var(--pass)' : 'var(--fail)'}">${c.ok ? 'はい' : 'いいえ'}</b> ${esc(c.item)}<br><span class="k">${esc(c.observed || '')}</span></li>`).join('')}</ul>` : ''}
+      <div class="k">DeepSeek が挙げた候補</div><ul>${(r.candidates || []).map(x => `<li>${esc(x)}</li>`).join('') || '<li>なし</li>'}</ul>
+      ${r.lint && r.lint.length ? `<div class="k">自動検査</div><ul>${r.lint.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}</div>`;
+  }
+  const sheet = selCell && its[selCell[0]] && its[selCell[0]].sheet ? its[selCell[0]].sheet : files.sheet;
+
+  // 枠は選んだジョブごとに一度だけ作り、あとは中身だけ書き換える（プレビューを再読み込みしないため）
+  if ($('#detail').dataset.job !== s.id) {
+    $('#detail').dataset.job = s.id;
+    $('#detail').innerHTML = `
+      <section><div class="head" id="d-head"></div><div class="meta" id="d-meta"></div></section>
+      <section><h2>判定の推移（セルを押すと理由）</h2><div id="d-table"></div></section>
+      <div class="grid2">
+        <section><h2>判定の理由</h2><div id="d-issue"></div></section>
+        <section><h2>確認画像（各場面の 35% と 80% の時点）</h2><img class="sheet" id="sheetimg" alt="確認画像" hidden><div class="meta" id="d-nosheet">—</div></section>
+      </div>
+      <div class="grid2">
+        <section><h2>プレビュー（動くもの）</h2><iframe id="pv" title="プレビュー" hidden></iframe><div class="meta" id="d-pvlinks">—</div></section>
+        <section><h2>GIF</h2><div id="d-gif"></div></section>
+      </div>
+      <section><h2>ログ</h2><pre class="log" id="log"></pre></section>`;
+  }
+  $('#d-head').innerHTML = `<h2>${esc(s.params.title || s.params.topic)}</h2>
+    <span class="pill st-${s.status}">${STATUS[s.status] || s.status}</span>
+    <span class="meta">${esc(s.phase)}　DeepSeek 呼び出し ${s.llm_calls} 回・${Math.round(s.llm_seconds / 60)} 分</span>
+    ${running ? '<button id="stop">停止</button>' : ''}`;
+  $('#d-meta').textContent = `テーマ: ${s.params.topic}　場面 ${s.params.scenes}・${s.params.seconds}秒・最大 ${s.params.max_iter} 回`;
+  $('#d-table').innerHTML = table;
+  $('#d-issue').innerHTML = issue || '<div class="meta">—</div>';
+  const img = $('#sheetimg');
+  if (sheet) {
+    const src = `/files/${s.id}/${sheet}?v=${its.length}-${s.status}`;
+    if (img.getAttribute('src') !== src) img.setAttribute('src', src);
+    img.hidden = false; $('#d-nosheet').hidden = true;
+  }
+  if (files.preview) {
+    const key = `/files/${s.id}/${files.preview}?v=${its.length}-${s.status}`;
+    if ($('#pv').getAttribute('src') !== key) $('#pv').setAttribute('src', key);
+    $('#pv').hidden = false;
+    $('#d-pvlinks').innerHTML = `<a href="/files/${s.id}/${files.preview}" target="_blank">別のタブで開く</a>・<a href="/files/${s.id}/scenes.js" target="_blank">scenes.js</a>`;
+  }
+  $('#d-gif').innerHTML = files.gif ? `<img class="gif" src="/files/${s.id}/${files.gif}?v=${s.status}" alt="完成した GIF">
+    <div class="meta">${esc(s.gif_info || '')}　<a href="/files/${s.id}/${files.gif}" download>ダウンロード</a></div>`
+    : '<div class="meta">全場面が合格するか上限に達すると作られます</div>';
+  const lg = $('#log'); lg.textContent = (s.log || []).slice(-120).join('\n'); lg.scrollTop = lg.scrollHeight;
+  if ($('#stop')) $('#stop').onclick = () => fetch(`/api/jobs/${s.id}/stop`, { method: 'POST' });
+  document.querySelectorAll('td.cell').forEach(td => td.onclick = () => { selCell = [+td.dataset.it, +td.dataset.i]; loadDetail(); });
+}
+
+// 実行中は 3 秒ごとに更新（プレビューの再読み込みを避けるため、表示が変わったときだけ描き直す）
+let lastStamp = '';
+setInterval(async () => {
+  loadJobs();
+  if (!sel) return;
+  const s = await (await fetch('/api/jobs/' + sel)).json();
+  const stamp = `${s.status}|${s.phase}|${(s.log || []).length}|${(s.iterations || []).length}`;
+  if (stamp !== lastStamp) { lastStamp = stamp; loadDetail(); }
+}, 3000);
+loadJobs();
+</script>
+</html>
