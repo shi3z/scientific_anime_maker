@@ -118,3 +118,7 @@ examples/
   reference_scenes.js LLM に渡す作例（オデュッセイア第 2 話）
   *.gif               作例
 ```
+
+## ライセンス
+
+[Apache License 2.0](LICENSE)
