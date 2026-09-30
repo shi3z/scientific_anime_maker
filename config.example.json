@@ -6,5 +6,6 @@
   },
   "port": 8777,
   "hires": 8,
-  "gif_hires": 4
+  "gif_hires": 4,
+  "small": { "hires": 1, "scale": 1 }
 }

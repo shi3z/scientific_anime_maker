@@ -208,7 +208,8 @@ async function loadDetail() {
   }
   const fin = s.final ? `<div class="meta">GIF に入れた場面: ${s.final.kept.map(i => '場面' + i).join('、')}${s.final.omitted.length ? '　／　省略: ' + s.final.omitted.map(o => `場面${o.idx}（${esc(o.reason)}）`).join('、') : ''}</div>` : '';
   $('#d-gif').innerHTML = fin + (files.gif ? `<img class="gif" src="/files/${s.id}/${files.gif}?v=${s.status}" alt="完成した GIF">
-    <div class="meta">${esc(s.gif_info || '')}　<a href="/files/${s.id}/${files.gif}" download>ダウンロード</a></div>`
+    <div class="meta">${esc(s.gif_info || '')}　<a href="/files/${s.id}/${files.gif}" download>ダウンロード</a></div>
+    ${files.gif_small ? `<div class="meta">解像度を下げた版: ${esc(s.gif_small_info || '')}　<a href="/files/${s.id}/${files.gif_small}" target="_blank">見る</a>・<a href="/files/${s.id}/${files.gif_small}" download>ダウンロード</a></div>` : ''}`
     : '<div class="meta">全場面が合格するか、打ち切りになると作られます</div>');
   const lg = $('#log'); lg.textContent = (s.log || []).slice(-120).join('\n'); lg.scrollTop = lg.scrollHeight;
   if ($('#stop')) $('#stop').onclick = () => fetch(`/api/jobs/${s.id}/stop`, { method: 'POST' });

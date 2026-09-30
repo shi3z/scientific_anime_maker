@@ -23,7 +23,7 @@ def load_config():
     """設定の読み込み。優先順位: 環境変数 > config.json > 既定値。
     config.json の場所は環境変数 SAM_CONFIG で変えられる（既定はリポジトリ直下）。"""
     cfg = {'llm': {'url': 'http://localhost:8000/v1/chat/completions', 'key': '', 'model': 'deepseek-v4.1-flash'},
-           'port': 8777, 'hires': 8, 'gif_hires': 4}
+           'port': 8777, 'hires': 8, 'gif_hires': 4, 'small': {'hires': 1, 'scale': 1}}
     path = os.environ.get('SAM_CONFIG', os.path.join(REPO, 'config.json'))
     if os.path.exists(path):
         user = json.load(open(path, encoding='utf-8'))
@@ -135,13 +135,16 @@ def system_prompt():
 HARD = ('ERROR', 'BADTEXT', 'OUTSIDE', 'CHECK FAILED', 'EXPR ERROR', 'MISSING GLYPH', 'COLOR AS TEXT')   # これがある場面は GIF に入れない
 
 
-def build(job, lint_only, scenes_file='scenes.js', out='anim.gif'):
+def build(job, lint_only, scenes_file='scenes.js', out='anim.gif', small=False):
     """lint_only: 等倍で全コマを描いて検査し、判定用の 2 コマだけ高解像度（hires）で描き直す。
     そうでなければ gif_hires の解像度で描いて GIF を作る（文字がなめらかになる）。"""
     title = job.state['params'].get('title') or ''
     cmd = ['python3', os.path.join(SKILL, 'build_gif.py'), job.path(scenes_file), '-o', job.path(out), '--title', title]
     if lint_only:
         cmd += ['--lint-only', '--frames-dir', job.path('frames'), '--frames-hires', str(CONFIG.get('hires', 8))]
+    elif small:   # 解像度を下げた版（既定は 320x212 のピクセルアート）
+        sm = CONFIG.get('small') or {}
+        cmd += ['--hires', str(sm.get('hires', 1)), '--scale', str(sm.get('scale', 1))]
     else:
         cmd += ['--hires', str(CONFIG.get('gif_hires', 4))]
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
@@ -639,10 +642,16 @@ def run(job):
 
         job.set(phase='GIF の書き出し', final={'kept': kept, 'omitted': omitted, 'accept': accept})
         final = build(job, False, 'final_scenes.js', 'anim.gif')
-        m = re.search(r'GIF: .*?(\d+) KB\s+約(\d+)秒', final['text'])
+        m = re.search(r'GIF: .*?(\d+) KB\s+約(\d+)秒\s+(\d+x\d+)', final['text'])
+        job.set(phase='GIF の書き出し（解像度を下げた版）')
+        small = build(job, False, 'final_scenes.js', 'anim_small.gif', small=True)
+        ms = re.search(r'GIF: .*?(\d+) KB\s+約(\d+)秒\s+(\d+x\d+)', small['text'])
         with job.lock:
             job.state['files'].update({'gif': 'anim.gif', 'preview': 'anim_preview.html', 'sheet': 'anim_sheet.png', 'scenes': 'final_scenes.js'})
-            job.state['gif_info'] = f'{m.group(1)} KB / 約{m.group(2)}秒' if m else ''
+            if ms:
+                job.state['files']['gif_small'] = 'anim_small.gif'
+            job.state['gif_info'] = f'{m.group(3)}・{m.group(1)} KB・約{m.group(2)}秒' if m else ''
+            job.state['gif_small_info'] = f'{ms.group(3)}・{ms.group(1)} KB' if ms else ''
         all_pass = len(frozen) == len(codes)
         job.set(status='done' if all_pass else 'done_with_issues',
                 phase='完了（全場面合格）' if all_pass else f'完了（{len(kept)}/{len(codes)} 場面を使用、{len(omitted)} 場面を省略）')
