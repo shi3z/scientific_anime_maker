@@ -79,6 +79,12 @@
           <div><label for="seconds">合計秒数</label><input id="seconds" type="number" min="10" max="180" value="45"></div>
           <div><label for="max_iter">最大回数</label><input id="max_iter" type="number" min="1" max="30" value="8"></div>
         </div>
+        <div class="row">
+          <div><label for="accept">合格ライン（点）</label><input id="accept" type="number" min="0" max="10" value="7"></div>
+          <div><label for="patience">伸びなければ打切（回）</label><input id="patience" type="number" min="1" max="10" value="2"></div>
+          <div></div>
+        </div>
+        <div class="meta">合格しなかった場面は、合格ライン以上で致命的な問題がなければ使い、届かなければ GIF から省きます。</div>
         <details>
           <summary>接続設定（空欄なら config.json の値）</summary>
           <label for="url">エンドポイント</label><input id="url" placeholder="">
@@ -101,7 +107,7 @@
 <script>
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-const STATUS = { queued: '待機中', running: '実行中', done: '完了（全場面合格）', done_with_issues: '終了（未合格あり）', error: 'エラー', stopped: '停止' };
+const STATUS = { queued: '待機中', running: '実行中', done: '完了（全場面合格）', done_with_issues: '完了（一部省略）', error: 'エラー', stopped: '停止' };
 let sel = null, selCell = null, lastSheet = '', lastPreviewKey = '';
 
 fetch('/api/config').then(r => r.json()).then(c => { $('#url').placeholder = c.url; $('#model').placeholder = c.model; });
@@ -109,7 +115,7 @@ fetch('/api/config').then(r => r.json()).then(c => { $('#url').placeholder = c.u
 $('#f').addEventListener('submit', async e => {
   e.preventDefault();
   const body = {};
-  ['topic', 'details', 'title', 'scenes', 'seconds', 'max_iter', 'url', 'model', 'key'].forEach(k => body[k] = $('#' + k).value);
+  ['topic', 'details', 'title', 'scenes', 'seconds', 'max_iter', 'accept', 'patience', 'url', 'model', 'key'].forEach(k => body[k] = $('#' + k).value);
   const r = await fetch('/api/jobs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   const j = await r.json();
   if (!r.ok) { $('#msg').textContent = j.error; return; }
@@ -129,7 +135,9 @@ async function loadJobs() {
 
 function cellHtml(r, it, i) {
   const cur = selCell && selCell[0] === it && selCell[1] === i ? ' cur' : '';
-  return `<td class="cell ${r.verdict === 'PASS' ? 'pass' : 'fail'}${cur}" data-it="${it}" data-i="${i}" title="クリックで判定理由">${r.verdict === 'PASS' ? '合格' : '×'} ${r.score}</td>`;
+  const lintNg = (r.lint || []).length;
+  const ok = r.ok ?? (r.verdict === 'PASS' && !lintNg);
+  return `<td class="cell ${ok ? 'pass' : 'fail'}${cur}" data-it="${it}" data-i="${i}" title="クリックで判定理由">${ok ? '合格' : '×'} ${r.score}${r.frozen ? '（済）' : ''}<br><span style="font-weight:400;font-size:11px">判定${r.verdict === 'PASS' ? '○' : '×'}・検査${lintNg ? '×' + lintNg : '○'}</span></td>`;
 }
 
 async function loadDetail() {
@@ -154,10 +162,11 @@ async function loadDetail() {
   let issue = '';
   if (selCell && its[selCell[0]] && its[selCell[0]].scenes[selCell[1]]) {
     const r = its[selCell[0]].scenes[selCell[1]];
-    issue = `<div class="issue"><h3>${its[selCell[0]].n}回目・場面${selCell[1]}：${r.verdict === 'PASS' ? '合格' : '不合格'}（${r.score}点）</h3>
-      <div class="k">確定した問題</div><ul>${r.issues.length ? r.issues.map(x => `<li>${esc(x)}</li>`).join('') : '<li>なし</li>'}</ul>
+    issue = `<div class="issue"><h3>${its[selCell[0]].n}回目・場面${selCell[1]}：見た目の判定 ${r.verdict === 'PASS' ? '合格' : '不合格'}（${r.score}点）・自動検査 ${(r.lint || []).length ? '問題あり' : '問題なし'}</h3>
+      <div class="k">見た目の判定で確定した問題</div><ul>${r.issues.length ? r.issues.map(x => `<li>${esc(x)}</li>`).join('') : '<li>なし</li>'}</ul>
       ${(r.checks || []).length ? `<div class="k">確認項目（こうなっているはず）</div><ul>${r.checks.map(c => `<li><b style="color:${c.ok ? 'var(--pass)' : 'var(--fail)'}">${c.ok ? 'はい' : 'いいえ'}</b> ${esc(c.item)}<br><span class="k">${esc(c.observed || '')}</span></li>`).join('')}</ul>` : ''}
-      <div class="k">DeepSeek が挙げた候補</div><ul>${(r.candidates || []).map(x => `<li>${esc(x)}</li>`).join('') || '<li>なし</li>'}</ul>
+      ${(r.questions || []).length ? `<div class="k">画像への質問と、正解を知らずに答えた観察結果</div><ul>${r.questions.map((q, k) => `<li>${esc(q)}<br><span class="k">→ ${esc(((r.observation || {}).answers || [])[k] || '')}</span></li>`).join('')}</ul>` : ''}
+      <div class="k">観察で見つかった重なり・不自然な部品</div><ul>${(r.candidates || []).map(x => `<li>${esc(x)}</li>`).join('') || '<li>なし</li>'}</ul>
       ${r.lint && r.lint.length ? `<div class="k">自動検査</div><ul>${r.lint.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}</div>`;
   }
   const sheet = selCell && its[selCell[0]] && its[selCell[0]].sheet ? its[selCell[0]].sheet : files.sheet;
@@ -197,9 +206,10 @@ async function loadDetail() {
     $('#pv').hidden = false;
     $('#d-pvlinks').innerHTML = `<a href="/files/${s.id}/${files.preview}" target="_blank">別のタブで開く</a>・<a href="/files/${s.id}/scenes.js" target="_blank">scenes.js</a>`;
   }
-  $('#d-gif').innerHTML = files.gif ? `<img class="gif" src="/files/${s.id}/${files.gif}?v=${s.status}" alt="完成した GIF">
+  const fin = s.final ? `<div class="meta">GIF に入れた場面: ${s.final.kept.map(i => '場面' + i).join('、')}${s.final.omitted.length ? '　／　省略: ' + s.final.omitted.map(o => `場面${o.idx}（${esc(o.reason)}）`).join('、') : ''}</div>` : '';
+  $('#d-gif').innerHTML = fin + (files.gif ? `<img class="gif" src="/files/${s.id}/${files.gif}?v=${s.status}" alt="完成した GIF">
     <div class="meta">${esc(s.gif_info || '')}　<a href="/files/${s.id}/${files.gif}" download>ダウンロード</a></div>`
-    : '<div class="meta">全場面が合格するか上限に達すると作られます</div>';
+    : '<div class="meta">全場面が合格するか、打ち切りになると作られます</div>');
   const lg = $('#log'); lg.textContent = (s.log || []).slice(-120).join('\n'); lg.scrollTop = lg.scrollHeight;
   if ($('#stop')) $('#stop').onclick = () => fetch(`/api/jobs/${s.id}/stop`, { method: 'POST' });
   document.querySelectorAll('td.cell').forEach(td => td.onclick = () => { selCell = [+td.dataset.it, +td.dataset.i]; loadDetail(); });

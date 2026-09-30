@@ -12,7 +12,7 @@
 必要なもの: Google Chrome / Chromium、ffmpeg、Python の Pillow、日本語フォント
 """
 import argparse, base64, html, io, json, os, re, shutil, subprocess, sys, tempfile
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageChops, ImageDraw, ImageFont
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 FPS = 10
@@ -48,6 +48,7 @@ LOOP_JS = r"""
       out.push(si + '\t' + f + '\t' + (s.name || '') + '\t' + cap.replace(/[\t\n]/g, ' ') + '\t' + cv.toDataURL('image/png'));
     }
   });
+  lint.moves = (typeof SCENES !== 'undefined' && Array.isArray(SCENES)) ? SCENES.map(s => Array.isArray(s.moves) ? s.moves : []) : [];
   lint.missing = [...LINT.missing];
   lint.colorText = [...new Set(LINT.colorText || [])].slice(0, 5);
   lint.checks = (typeof CHECKS !== 'undefined' ? CHECKS : []).filter(c => !c[1]).map(c => c[0]);
@@ -163,6 +164,24 @@ def render(scenes_path, chrome, hires=1):
     return rows, lint
 
 
+def render_frames(scenes_path, chrome, hires, targets):
+    """指定したコマ（場面番号, 秒）だけを、高解像度で描き直す。判定用。"""
+    pixel = open(os.path.join(HERE, 'pixel.js'), encoding='utf-8').read()
+    scenes = open(scenes_path, encoding='utf-8').read()
+    js = ('(() => { const out = []; for (const [si, t] of ' + json.dumps(targets) + ') { resetCtx(); clear();'
+          ' try { SCENES[si].draw(t); } catch (e) {} out.push(cv.toDataURL("image/png")); }'
+          ' document.getElementById("out").textContent = out.join("\\n"); })();')
+    page = ('<!doctype html><meta charset="utf-8"><canvas id="screen" width="320" height="180"></canvas><pre id="out"></pre>'
+            f'<script>window.PIXEL_SCALE = {hires};</script><script>{pixel}</script><script>{scenes}</script><script>{js}</script>')
+    with tempfile.TemporaryDirectory() as d:
+        p = os.path.join(d, 'frames.html')
+        open(p, 'w', encoding='utf-8').write(page)
+        r = subprocess.run([chrome, '--headless=new', '--disable-gpu', '--virtual-time-budget=60000', '--dump-dom', 'file://' + p],
+                           capture_output=True, text=True, timeout=600)
+    body = html.unescape(re.search(r'<pre id="out">(.*?)</pre>', r.stdout, re.S).group(1)).strip()
+    return [Image.open(io.BytesIO(base64.b64decode(u.split(',', 1)[1]))).convert('RGB') for u in body.split('\n') if u]
+
+
 def report(lint):
     ok = True
     for e in lint.get('errors', []):
@@ -208,6 +227,7 @@ def main():
     ap.add_argument('--lint-only', action='store_true', help='チェックと確認画像だけ作る')
     ap.add_argument('--hires', type=int, default=1, help='高解像度モード（4 なら 1280x720 で描き、文字をなめらかなフォントにする）')
     ap.add_argument('--frames-dir', help='各場面の 35%% と 80%% のコマを原寸 PNG で保存するフォルダ（判定用）')
+    ap.add_argument('--frames-hires', type=int, help='--frames-dir のコマだけをこの倍率で描き直す（例 8 → 2560x1440）。全コマを高解像度で描くより速い')
     ap.add_argument('--chrome'); ap.add_argument('--font')
     a = ap.parse_args()
 
@@ -226,21 +246,76 @@ def main():
 
     # 確認用の一覧画像（各場面 35% と 80% の時点）
     base = os.path.splitext(a.out)[0]
+    # 判定用のコマ: a=35%, b=80%（確認画像にも使う）、m1=15%, m2=55%（動きの確認用。--frames-dir のときだけ）
+    TAGS = (('a', .35), ('b', .8)) + ((('m1', .15), ('m2', .55)) if a.frames_dir else ())
+    pick = {(si, tag): scenes[si][min(len(scenes[si]) - 1, int(len(scenes[si]) * q))] for si in scenes for tag, q in TAGS}
+    if a.frames_hires and a.frames_hires != a.hires:
+        keys = sorted(pick)
+        imgs = render_frames(a.scenes, find_chrome(a.chrome), a.frames_hires, [[si, pick[(si, tag)][0] / FPS] for si, tag in keys])
+        frames_img = dict(zip(keys, imgs))
+    else:
+        frames_img = {k: Image.open(io.BytesIO(base64.b64decode(v[3]))).convert('RGB') for k, v in pick.items()}
     shots = []
     for si in sorted(scenes):
-        fr = scenes[si]
-        for q in (.35, .8):
-            shots.append(Image.open(io.BytesIO(base64.b64decode(fr[min(len(fr) - 1, int(len(fr) * q))][3]))).convert('RGB').resize((640, 360), Image.NEAREST if a.hires == 1 else Image.LANCZOS))
+        for tag in ('a', 'b'):
+            im = frames_img[(si, tag)]
+            shots.append(im.resize((640, 360), Image.NEAREST if im.size[0] <= 640 else Image.LANCZOS))
     sheet = Image.new('RGB', (1280, 360 * len(scenes)), (0, 0, 0))
     for k, im in enumerate(shots):
         sheet.paste(im, ((k % 2) * 640, (k // 2) * 360))
     sheet.save(base + '_sheet.png')
+    # 動きの検査: 各場面の moves: [['ラベル', x, y, w, h], ...] の範囲が、場面を通して変化しているか（全コマの最大と最小の差で測る）
+    masks = {}
+    for si in sorted(scenes):
+        lo = hi = None
+        for f, name, cap, b64 in scenes[si]:
+            im = Image.open(io.BytesIO(base64.b64decode(b64))).convert('RGB')
+            lo = im if lo is None else ImageChops.darker(lo, im)
+            hi = im if hi is None else ImageChops.lighter(hi, im)
+        masks[si] = ImageChops.difference(hi, lo).convert('L').point(lambda v: 255 if v > 24 else 0)
+    moves = lint.get('moves') or []
+    move_ok = move_ng = 0
+    for si in sorted(scenes):
+        m = masks[si]; k = m.size[0] / 320
+        for mv in (moves[si] if si < len(moves) else []):
+            try:
+                lab, x, y, w, h = mv[0], float(mv[1]), float(mv[2]), float(mv[3]), float(mv[4])
+            except Exception:
+                print(f'NO MOTION 場面 {si} moves の書き方が違う: {mv}（[ラベル, x, y, w, h] で書く）'); move_ng += 1; continue
+            box_ = (max(0, int(x * k)), max(0, int(y * k)), min(m.size[0], int((x + w) * k)), min(m.size[1], int((y + h) * k)))
+            area = max(1, (box_[2] - box_[0]) * (box_[3] - box_[1]))
+            pct = 100 * m.crop(box_).histogram()[255] / area if box_[2] > box_[0] and box_[3] > box_[1] else 0
+            if pct < 3:
+                print(f'NO MOTION 場面 {si} 「{lab}」の範囲 ({x:g},{y:g},{w:g},{h:g}) が場面を通してほとんど変化しない（変化した画素 {pct:.1f}%）'); move_ng += 1
+            else:
+                move_ok += 1
+    if move_ok or move_ng:
+        print(f'動きの検査 {move_ok + move_ng} 件のうち、変化なし {move_ng} 件')
     if a.frames_dir:
         os.makedirs(a.frames_dir, exist_ok=True)
+        for f in os.listdir(a.frames_dir):
+            if f.endswith('.png'):
+                os.remove(os.path.join(a.frames_dir, f))
+        for (si, tag), im in frames_img.items():
+            im.save(os.path.join(a.frames_dir, f's{si}_{tag}.png'))
+        # 動きの量: 時刻順に隣り合うコマで、色が変わった画素の割合（等倍に縮めて比べる）
+        motion = {}
         for si in sorted(scenes):
-            fr = scenes[si]
-            for tag, q in (('a', .35), ('b', .8)):
-                Image.open(io.BytesIO(base64.b64decode(fr[min(len(fr) - 1, int(len(fr) * q))][3]))).convert('RGB').save(os.path.join(a.frames_dir, f's{si}_{tag}.png'))
+            seq = [frames_img[(si, t)].resize((320, 180), Image.BILINEAR).convert('L') for t in ('m1', 'a', 'm2', 'b')]
+            ratios = []
+            for x, y in zip(seq, seq[1:]):
+                changed = ImageChops.difference(x, y).point(lambda v: 255 if v > 12 else 0).histogram()[255]
+                ratios.append(round(100 * changed / (320 * 180), 1))
+            motion[si] = {'15%→35%': ratios[0], '35%→55%': ratios[1], '55%→80%': ratios[2]}
+        # 変化マップ: 場面の全コマで、画素ごとの最大値と最小値の差が大きい所を赤で示す（点滅のように抜き出したコマでは見逃す変化も写る）
+        for si in sorted(scenes):
+            mask = masks[si]
+            base_im = frames_img[(si, 'b')]
+            overlay = Image.blend(base_im, Image.new('RGB', base_im.size, (0, 0, 0)), .55)
+            overlay.paste((255, 40, 40), (0, 0), mask.resize(base_im.size, Image.NEAREST))
+            overlay.save(os.path.join(a.frames_dir, f's{si}_change.png'))
+            motion[si]['場面全体で一度でも変化した画素'] = round(100 * mask.histogram()[255] / (mask.size[0] * mask.size[1]), 1)
+        json.dump(motion, open(os.path.join(a.frames_dir, 'motion.json'), 'w'), ensure_ascii=False)
     print('確認画像:', base + '_sheet.png', '（各場面の 35% と 80% の時点）')
     if a.lint_only:
         return

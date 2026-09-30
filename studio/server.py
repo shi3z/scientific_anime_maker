@@ -93,7 +93,8 @@ class H(BaseHTTPRequestHandler):
                 return self.send(400, {'error': 'テーマを入力してください'})
             params = {'topic': b['topic'].strip(), 'details': (b.get('details') or '').strip(), 'title': (b.get('title') or '').strip(),
                       'scenes': max(2, min(12, int(b.get('scenes') or 6))), 'seconds': max(10, min(180, int(b.get('seconds') or 45))),
-                      'max_iter': max(1, min(30, int(b.get('max_iter') or 8)))}
+                      'max_iter': max(1, min(30, int(b.get('max_iter') or 8))),
+                      'accept': max(0, min(10, int(b.get('accept') or 7))), 'patience': max(1, min(10, int(b.get('patience') or 2)))}
             llm = {k: b[k] for k in ('url', 'key', 'model') if b.get(k)}
             if llm:
                 params['llm'] = llm
