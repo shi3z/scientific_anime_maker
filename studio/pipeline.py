@@ -54,6 +54,10 @@ class Job:
         os.makedirs(self.dir, exist_ok=True)
         self.stop = False
         self.lock = threading.Lock()
+        existing = os.path.join(self.dir, 'state.json')
+        if jid and os.path.exists(existing):   # 既存のジョブは読み込むだけ（上書きしない）
+            self.state = json.load(open(existing, encoding='utf-8'))
+            return
         self.state = {'id': self.id, 'params': params, 'status': 'queued', 'phase': '', 'created': time.time(),
                       'log': [], 'iterations': [], 'files': {}, 'llm_calls': 0, 'llm_seconds': 0}
         self.save()

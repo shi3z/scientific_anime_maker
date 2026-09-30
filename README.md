@@ -1,27 +1,31 @@
 # scientific_anime_maker
 
-科学や数学の仕組みを説明する教材アニメーション GIF を、LLM に作らせるための道具一式です。
+English | [日本語](README.ja.md)
 
-- **skill/** … 描画エンジンと書き出しツール。LLM（や人）は `scenes.js` を 1 つ書くだけで、字幕つきの GIF、ブラウザで動くプレビュー、自動検査の結果が得られます。
-- **studio/** … Web ツール「Anim Studio」。テーマを入れると、LLM（既定は DeepSeek）が GIF を作り、**自分で出来を判定して、全場面が合格するまで作り直します**。
+A toolkit for having an LLM make educational animated GIFs that explain how things work in science and math.
+
+- **skill/** — a drawing engine and a build tool. An LLM (or a person) writes a single `scenes.js` and gets a captioned GIF, a browser preview, and automatic checks.
+- **studio/** — a web tool, "Anim Studio". Enter a topic and an LLM (DeepSeek by default) makes the GIF, **judges its own output, and keeps fixing it until every scene passes**.
 
 <p>
-<img src="examples/odyssey_ep2.gif" width="48%" alt="オデュッセイア 第2話 キュクロプス">
-<img src="examples/rodrigues.gif" width="48%" alt="任意軸まわりの回転（ロドリゲスの公式）">
+<img src="examples/odyssey_ep2.gif" width="48%" alt="The Odyssey, episode 2: the Cyclops">
+<img src="examples/rodrigues.gif" width="48%" alt="Rotation about an arbitrary axis (Rodrigues' formula)">
 </p>
 
-## 必要なもの
+> The web UI, the prompts, and the subtitles are currently in Japanese. Text drawn inside the animation is short English labels and math.
 
-- Python 3.9 以上と Pillow（`pip install pillow`）
-- ffmpeg（GIF の書き出しに使う）
-- Google Chrome または Chromium（ヘッドレスで描画する）
-- 日本語フォント（字幕に使う。mac は標準で入っている。Linux は Noto Sans CJK など）
-- OpenAI 互換の Chat Completions API で使える LLM。**画像を読めるモデル**が必要（出来の判定で画面の画像を見せるため）
+## Requirements
 
-## 設定（LLM の接続先）
+- Python 3.9+ and Pillow (`pip install pillow`)
+- ffmpeg (for writing GIFs)
+- Google Chrome or Chromium (used headless for rendering)
+- A Japanese font for the subtitles (built into macOS; on Linux, e.g. Noto Sans CJK)
+- An LLM behind an OpenAI-compatible Chat Completions API. **It must accept images**, because judging works by showing it rendered frames.
 
-LLM の接続先・API キー・モデル名はコードに書かず、リポジトリ直下の `config.json` で設定します。
-`config.json` は `.gitignore` に入っているので、手元の固有アドレスやキーがリポジトリに入ることはありません。
+## Configuration (LLM endpoint)
+
+The LLM endpoint, API key, and model name are not in the code. Set them in `config.json` at the repository root.
+`config.json` is listed in `.gitignore`, so your own host address and key never end up in the repository.
 
 ```sh
 cp config.example.json config.json
@@ -35,102 +39,104 @@ cp config.example.json config.json
     "model": "deepseek-v4.1-flash"
   },
   "port": 8777,
-  "hires": 4
+  "hires": 8,
+  "gif_hires": 4,
+  "small": { "hires": 1, "scale": 1 }
 }
 ```
 
-| 項目 | 意味 |
+| Key | Meaning |
 |---|---|
-| `llm.url` | Chat Completions のエンドポイント（`…/v1/chat/completions` まで書く）。自分の LLM サーバー（例: LiteLLM や vLLM を置いたマシン）のアドレスに変える |
-| `llm.key` | API キー（`Authorization: Bearer …` で送る）。不要なサーバーなら空文字 |
-| `llm.model` | モデル名 |
-| `port` | Anim Studio を開くポート |
-| `hires` | 判定用のコマを描く解像度の倍率。8 なら 2560x1440 で描いて、縮めたり切り出したりして LLM に見せる |
-| `gif_hires` | 完成した GIF を描く解像度の倍率。4 なら文字がなめらかになる（1 にすると 3x5 ドットのピクセルアートのまま） |
-| `small` | 解像度を下げた版（`anim_small.gif`）の設定。`hires` は描く倍率、`scale` は出力の倍率。既定の 1 と 1 なら 320x212 のピクセルアート（音波の例で約 330KB。通常版は 640x424 で約 1.5MB） |
+| `llm.url` | Chat Completions endpoint (include the full `…/v1/chat/completions`). Point it at your own LLM server, e.g. a machine running LiteLLM or vLLM |
+| `llm.key` | API key, sent as `Authorization: Bearer …`. Use an empty string if your server needs none |
+| `llm.model` | Model name |
+| `port` | Port Anim Studio listens on |
+| `hires` | Scale factor for the frames used in judging. 8 renders at 2560x1440; the frames are then downscaled or cropped before being shown to the LLM |
+| `gif_hires` | Scale factor for rendering the finished GIF. 4 gives smooth text; 1 keeps the 3x5-dot pixel-art font |
+| `small` | Settings for the low-resolution copy (`anim_small.gif`). `hires` is the render scale, `scale` the output scale. The default 1 and 1 gives 320x212 pixel art (about 330 KB for the sound-wave example, versus about 1.5 MB for the regular 640x424 GIF) |
 
-設定の優先順位は **環境変数 > config.json > 既定値** です。
+Precedence is **environment variables > config.json > defaults**.
 
-- 環境変数 `SAM_LLM_URL` / `SAM_LLM_KEY` / `SAM_LLM_MODEL` / `PORT` で一時的に上書きできます。
-- `SAM_CONFIG=/path/to/other.json` で、別の設定ファイルを使えます（接続先を複数使い分けるとき）。
-- Anim Studio の画面の「接続設定」に入れると、そのジョブだけ接続先を変えられます。
+- `SAM_LLM_URL` / `SAM_LLM_KEY` / `SAM_LLM_MODEL` / `PORT` override values temporarily.
+- `SAM_CONFIG=/path/to/other.json` uses a different config file (handy when switching between servers).
+- Values typed into "接続設定" (connection settings) in the Anim Studio UI apply to that job only.
 
-## Anim Studio（Web ツール）
+## Anim Studio (web tool)
 
 ```sh
 python3 studio/server.py
-# → http://localhost:8777 を開く
+# then open http://localhost:8777
 ```
 
-左の欄にテーマと場面の流れ（空欄ならおまかせ）、場面数・秒数・最大回数を入れて「作り始める」を押します。
-右側に、回ごと・場面ごとの点数、判定の理由（確認項目ごとの「はい／いいえ」と LLM が見た実際の様子）、
-確認画像、動くプレビュー、完成した GIF、ログが出ます。ジョブは `studio/jobs/` に保存され、サーバーを再起動しても残ります。
+On the left, enter a topic, an optional outline of the scenes, the number of scenes, the length in seconds, and the maximum number of rounds, then press "作り始める" (start).
+The right side shows the score of each scene in each round, the reasons behind each verdict (a yes/no for each check item, with what the LLM actually saw),
+the review sheet, a live preview, the finished GIFs, and the log. Jobs are saved under `studio/jobs/` and survive a server restart.
 
-処理の流れ:
+How a job runs:
 
-1. **生成** — `skill/` の手順書・描画エンジン・見本を LLM に渡し、`scenes.js` を書かせる。各場面には次の 2 つも書かせる。
-   - `expect`: 静止画で確かめられる「こうなっているはず」の項目（部品どうしの位置関係・形・重なり）
-   - `moves`: 動く・点滅するはずの部品と、その範囲
-2. **自動検査** — `build_gif.py` で全コマを描き、プログラムで調べる: 例外・フォントにない文字・はみ出し・文字の重なり・数値の検算・
-   `moves` の範囲が本当に変化しているか（全コマの最大と最小の差で測る）。
-3. **見た目の判定**（自動検査の結果は渡さない）— 3 段階で行う。
-   1. `expect` の各項目を、**正解を含まない中立な質問**に言い換えさせる（文字だけ）。
-   2. 正解を知らせずに、画像を見たまま答えさせる。画像は 15% / 35% / 55% / 80% のコマ（時刻順）、場面全体で変化した場所を赤く示した変化マップ、
-      80% のコマを 4 分割して拡大したもの。判定用のコマだけを 8 倍の解像度で描き直す。
-   3. 観察結果と `expect` を突き合わせて合否と点数を出させる（文字だけ）。
-4. **場面の合格** = 見た目の判定が合格 かつ その場面の自動検査に問題なし。合格した場面は固定し、以後は判定も修正もしない。
-5. **修正** — 不合格の場面だけを、判定の指摘・自動検査の結果・画像を渡して書き直させる。直した結果が壊れていたら（描けない・場面を切り出せない・例外）取り消す。
-6. 全場面が合格するか、最大回数に達するか、点数が決まった回数続けて伸びなくなったら終わる。
-7. **組み立て** — 場面ごとに一番良かった版（①合格 ②致命的な問題がない ③点数が高い、の順）を使って GIF を作る。
-   合格しなかった場面は、合格ライン以上で致命的な問題がなければ使い、届かなければ省く。何を使い何を省いたかは画面に出る。
-   GIF は通常版（`anim.gif`）と、解像度を下げた軽い版（`anim_small.gif`）の 2 つを書き出す。
+1. **Generate** — give the LLM the skill's instructions, drawing engine, and examples, and have it write `scenes.js`. Each scene must also declare:
+   - `expect`: things that should be true in a still frame (positions of parts relative to each other, shapes, overlaps)
+   - `moves`: parts that should move or blink, with the region they occupy
+2. **Automatic checks** — `build_gif.py` renders every frame and checks, in code: exceptions, characters missing from the font, text off screen, overlapping text,
+   numeric self-checks, and whether each `moves` region actually changes (measured from the per-pixel max and min over all frames).
+3. **Visual judging** (the automatic check results are *not* given to the judge) — three stages:
+   1. Rewrite each `expect` item as a **neutral question that does not contain the answer** (text only).
+   2. Without revealing the expected answer, have the LLM describe what it sees. It gets frames at 15% / 35% / 55% / 80% (in time order),
+      a change map that marks in red everything that changed during the scene, and the 80% frame split into four enlarged quarters. Only these frames are re-rendered at 8x.
+   3. Compare the observations with `expect` and produce a pass/fail verdict and a score (text only).
+4. **A scene passes** when the visual verdict passes *and* the scene has no automatic-check problems. Passed scenes are frozen and never judged or edited again.
+5. **Fix** — rewrite only the failing scenes, giving the LLM the judge's findings, the automatic-check results, and the frames. If a fix breaks the file (nothing renders, scenes can't be split out, or an exception), it is rolled back.
+6. Stop when every scene passes, the maximum number of rounds is reached, or the total score stops improving for a set number of rounds.
+7. **Assemble** — build the GIF from the best version of each scene (preferring, in order: passed, no fatal problem, highest score).
+   A scene that never passed is still used if it scored at least the pass line and has no fatal problem; otherwise it is left out. The UI shows which scenes were used and which were dropped.
+   Two GIFs are written: the regular `anim.gif` and a lighter low-resolution `anim_small.gif`.
 
-## skill/ だけを使う
+## Using skill/ on its own
 
-`skill/SKILL.md` が手順書です。Claude Code などのエージェントのスキルとしてそのまま使えます（`~/.claude/skills/pixel-anim-gif/` に置く）。
-別の LLM に使わせるときは、`SKILL.md`・`pixel.js`・`example_scenes.js` をシステムプロンプトに入れて `scenes.js` を書かせます。
+`skill/SKILL.md` is the instruction file. It works as-is as a skill for agents such as Claude Code (put it in `~/.claude/skills/pixel-anim-gif/`).
+To use it with another LLM, put `SKILL.md`, `pixel.js`, and `example_scenes.js` in the system prompt and ask it to write `scenes.js`.
 
 ```sh
-python3 skill/build_gif.py scenes.js -o out.gif --title "題名" --lint-only   # 検査と確認画像だけ
-python3 skill/build_gif.py scenes.js -o out.gif --title "題名"               # GIF まで
-python3 skill/build_gif.py scenes.js -o out.gif --hires 4 --frames-dir frames # 高解像度で描く
+python3 skill/build_gif.py scenes.js -o out.gif --title "Title" --lint-only   # checks and review sheet only
+python3 skill/build_gif.py scenes.js -o out.gif --title "Title"               # through to the GIF
+python3 skill/build_gif.py scenes.js -o out.gif --hires 4 --frames-dir frames # render at high resolution
 ```
 
-出力: `out.gif`（字幕つき GIF）、`out_preview.html`（ブラウザで動くプレビュー）、`out_sheet.png`（各場面の途中 2 コマを並べた確認画像）。
+Outputs: `out.gif` (captioned GIF), `out_preview.html` (runs in a browser), `out_sheet.png` (review sheet with two frames from each scene).
 
-## わかったこと（DeepSeek v4.1 Flash で試した結果）
+## What we learned (tested with DeepSeek v4.1 Flash)
 
-- **スキルなしでは文字が読めない。** 自作のビットマップフォントが壊れる。検証済みのフォントと部品を渡すと、ほぼ全場面が動くコードになる。
-- **画面の式は、表示する文字列そのものを検算させる。** 別に書いた計算用の関数どうしを比べるだけの検算では、画面の符号の誤りを見逃す（`checkExpr()`）。
-- **全体を書き直させると、直したはずの場面が元に戻る。** 問題のある場面だけを書き直させると確実に直る。場面は括弧の対応で切り出す（字下げに頼ると取り違える）。
-- **存在しない部品を推測で使う。** 場面の外で定義されている名前の一覧を渡すと直る。
-- **縮めた画像はほぼ読めない。** 判定用のコマは高解像度・なめらかなフォントで描く。ただし**解像度を上げるだけでは足りない。**
-- **正解を示して聞くと「はい」と答える。** 「L2 の線は水平か」と聞くと、斜めでも「はい」。正解を伏せた中立な質問に言い換え、見たままを答えさせてから、別の段階で突き合わせる。
-- **色の名前・見出し・薄い補助線で落とさない。** 金とオレンジのような呼び方の違い、背景に近い色の線は、画像の判定では当てにならない。確認項目に書かせず、判定でも問題にしない。
-- **動きは画像から読み取れない。** 抜き出したコマや変化マップを見せても、点滅を「変わらない」と答えることがある。動きは `moves` で範囲を指定し、プログラムで全コマの変化を測る。
-- **数ドットのずれは数値で捕まえる。** 図の座標を少数の変数から計算させ、部品どうしの関係（「箱の下端 = 板の上面」など）を `check()` で検算させる。
-- **自動検査と見た目の判定は分ける。** 自動検査の結果を判定に渡すと、「自動検査が通っている」という項目を作って落とすなど、役割が混ざる。
-- **判定はばらつく。** 一度合格した場面を判定し直すと落ちることがある。合格した場面は固定し、場面ごとに一番良かった版を残す。
-- **画像を大きくしすぎると、サーバーによっては GPU メモリが足りなくなる。** 1 枚は 1280x720 までにし、足りなければ小さくして送り直す。
+- **Without the skill, the text is unreadable.** The model's own bitmap font comes out broken. Given a tested font and drawing parts, almost every scene becomes working code.
+- **Check the displayed formula string itself.** Comparing two separately written helper functions misses sign errors on screen; `checkExpr()` parses and evaluates the exact string that is displayed.
+- **Rewriting the whole file undoes earlier fixes.** Rewriting only the failing scene works reliably. Split scenes out by matching brackets, not by indentation (indentation gets misread).
+- **The model guesses at names that don't exist.** Passing the list of names defined outside the scene fixes it.
+- **Downscaled images are nearly unreadable.** Render judging frames at high resolution with a smooth font. But **higher resolution alone is not enough.**
+- **Tell it the expected answer and it says "yes".** Asked "is the L2 line horizontal?", it answers yes even when the line is slanted. Rephrase checks as neutral questions, have it describe what it sees, and compare in a separate step.
+- **Don't fail on color names, the title bar, or faint guide lines.** Gold versus orange, or a line close to the background color, can't be judged reliably from images. Keep them out of the check items and don't count them in judging.
+- **Motion can't be read from images.** Even with sampled frames and a change map, it may say a blinking part "doesn't change". Declare the region in `moves` and measure the change over all frames in code.
+- **Catch few-pixel misalignments with numbers.** Have the model compute coordinates from a few variables and write `check()` for relationships between parts ("bottom of the box = top of the board", etc.).
+- **Keep automatic checks separate from visual judging.** When the judge sees the check results, it mixes roles — for example, it invents an item "automatic checks pass" and fails it.
+- **Judging is noisy.** A scene that passed can fail when re-judged. Freeze passed scenes and keep the best version of each scene.
+- **Very large images can exhaust GPU memory on some servers.** Keep each image at or below 1280x720, and resend smaller ones if a request fails.
 
-## 構成
+## Layout
 
 ```
-config.example.json   接続先の雛形（config.json にコピーして使う）
+config.example.json   template for config.json
 skill/
-  SKILL.md            手順書（場面の分け方、規約、部品、検算、レイアウトの注意）
-  pixel.js            描画エンジン（3x5 フォント、図形、配線、行列、3D、グラフ、スプライト、検算、高解像度モード）
-  build_gif.py        検査・確認画像・プレビュー・GIF の書き出し
-  example_scenes.js   2 場面の見本
+  SKILL.md            instructions (splitting into scenes, conventions, parts, self-checks, layout tips)
+  pixel.js            drawing engine (3x5 font, shapes, wires, matrices, 3D, plots, sprites, self-checks, high-resolution mode)
+  build_gif.py        checks, review sheet, preview, and GIF output
+  example_scenes.js   two-scene example
 studio/
-  server.py           Web サーバー（標準ライブラリだけで動く）
-  pipeline.py         生成・検査・判定・修正の流れ
-  index.html          画面
+  server.py           web server (standard library only)
+  pipeline.py         generate / check / judge / fix loop
+  index.html          UI
 examples/
-  reference_scenes.js LLM に渡す作例（オデュッセイア第 2 話）
-  *.gif               作例
+  reference_scenes.js example given to the LLM (The Odyssey, episode 2)
+  *.gif               sample output
 ```
 
-## ライセンス
+## License
 
 [Apache License 2.0](LICENSE)
