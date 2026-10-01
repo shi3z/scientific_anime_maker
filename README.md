@@ -55,6 +55,24 @@ cp config.example.json config.json
 | `gif_hires` | Scale factor for rendering the finished GIF. 4 gives smooth text; 1 keeps the 3x5-dot pixel-art font |
 | `small` | Settings for the low-resolution copy (`anim_small.gif`). `hires` is the render scale, `scale` the output scale. The default 1 and 1 gives 320x212 pixel art (about 330 KB for the sound-wave example, versus about 1.5 MB for the regular 640x424 GIF) |
 
+### Using a local model with Ollama
+
+Set `"api": "ollama"` to call Ollama's native `/api/chat`, which lets you set the context length per request. Ollama's default context length can be very short, which silently truncates the ~23K-token prompt, so also build a model with a long context:
+
+```sh
+printf 'FROM qwen3.8:27b\nPARAMETER num_ctx 262144\n' > Modelfile
+ollama create qwen3.8:27b-256k -f Modelfile
+```
+
+```json
+{
+  "llm": { "api": "ollama", "url": "http://localhost:11434", "key": "", "model": "qwen3.8:27b-256k", "num_ctx": 262144, "think": false },
+  "port": 8778
+}
+```
+
+`think: true` makes thinking models emit their reasoning (shown in the UI, but slower). Save it as e.g. `config.qwen.json` (ignored by git) and run `SAM_CONFIG=config.qwen.json python3 studio/server.py` to run a second Studio next to the default one.
+
 Precedence is **environment variables > config.json > defaults**.
 
 - `SAM_LLM_URL` / `SAM_LLM_KEY` / `SAM_LLM_MODEL` / `PORT` override values temporarily.
@@ -69,7 +87,7 @@ python3 studio/server.py
 ```
 
 On the left, enter a topic, an optional outline of the scenes, the number of scenes, the length in seconds, and the maximum number of rounds, then press "作り始める" (start).
-The right side shows the score of each scene in each round, the reasons behind each verdict (a yes/no for each check item, with what the LLM actually saw),
+The right side shows what the LLM is writing right now (streamed live, including its reasoning when the model emits it), the score of each scene in each round, the reasons behind each verdict (a yes/no for each check item, with what the LLM actually saw),
 the review sheet, a live preview, the finished GIFs, and the log. Jobs are saved under `studio/jobs/` and survive a server restart.
 
 How a job runs:
@@ -117,6 +135,7 @@ Outputs: `out.gif` (captioned GIF), `out_preview.html` (runs in a browser), `out
 - **Catch few-pixel misalignments with numbers.** Have the model compute coordinates from a few variables and write `check()` for relationships between parts ("bottom of the box = top of the board", etc.).
 - **Keep automatic checks separate from visual judging.** When the judge sees the check results, it mixes roles — for example, it invents an item "automatic checks pass" and fails it.
 - **Judging is noisy.** A scene that passed can fail when re-judged. Freeze passed scenes and keep the best version of each scene.
+- **A local 27B model can do it too, slowly.** Qwen3.8 27B (Ollama, on an M4 Max) passed all three scenes of the sound-wave example in 5 rounds and about 2 hours 10 minutes (DeepSeek: 6 rounds, about 20 minutes). The judge passed a unit error (λ = 68 mm instead of 68 m) and some overlaps that DeepSeek's run did not have. Once it replied with a short message and no code; generation is now retried once in that case.
 - **Very large images can exhaust GPU memory on some servers.** Keep each image at or below 1280x720, and resend smaller ones if a request fails.
 
 ## Layout

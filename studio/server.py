@@ -73,6 +73,9 @@ class H(BaseHTTPRequestHandler):
             return self.send(200, {k: v for k, v in pipeline.DEFAULT_CFG.items() if k != 'key'})
         if path == '/api/jobs':
             return self.send(200, [summary(j) for j in sorted(JOBS.values(), key=lambda j: -j.state['created'])])
+        m = re.fullmatch(r'/api/jobs/([\w-]+)/live', path)
+        if m and m.group(1) in JOBS:   # LLM が書いている途中の内容（ストリーミング表示用）
+            return self.send(200, getattr(JOBS[m.group(1)], 'live', None) or {'active': False})
         m = re.fullmatch(r'/api/jobs/([\w-]+)', path)
         if m and m.group(1) in JOBS:
             st = json.loads(json.dumps(JOBS[m.group(1)].state))

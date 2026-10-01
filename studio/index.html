@@ -55,6 +55,13 @@
   img.gif { max-width: 100%; image-rendering: pixelated; border: 1px solid var(--line); }
   pre.log { margin: 0; max-height: 260px; overflow: auto; font: 12px/1.5 var(--mono); color: var(--ink2); white-space: pre-wrap; }
   .empty { color: var(--ink3); padding: 40px; text-align: center; }
+  .live-head { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; margin-bottom: 6px; }
+  .live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ink3); display: inline-block; }
+  .live-dot.on { background: var(--pass); animation: pulse 1s infinite; }
+  @keyframes pulse { 50% { opacity: .3; } }
+  @media (prefers-reduced-motion: reduce) { .live-dot.on { animation: none; } }
+  pre.live { margin: 0; max-height: 320px; overflow: auto; font: 12px/1.5 var(--mono); white-space: pre-wrap; background: var(--bg); border: 1px solid var(--line); border-radius: 4px; padding: 8px; }
+  pre.live.thinking { color: var(--ink3); max-height: 160px; margin-bottom: 6px; }
   a { color: var(--gold); }
 </style>
 
@@ -176,6 +183,11 @@ async function loadDetail() {
     $('#detail').dataset.job = s.id;
     $('#detail').innerHTML = `
       <section><div class="head" id="d-head"></div><div class="meta" id="d-meta"></div></section>
+      <section><h2>いま LLM が書いていること</h2>
+        <div class="live-head"><span class="live-dot" id="lv-dot"></span><span id="lv-what" class="meta">—</span></div>
+        <pre class="live thinking" id="lv-thinking" hidden></pre>
+        <pre class="live" id="lv-text"></pre>
+      </section>
       <section><h2>判定の推移（セルを押すと理由）</h2><div id="d-table"></div></section>
       <div class="grid2">
         <section><h2>判定の理由</h2><div id="d-issue"></div></section>
@@ -225,6 +237,27 @@ setInterval(async () => {
   const stamp = `${s.status}|${s.phase}|${(s.log || []).length}|${(s.iterations || []).length}`;
   if (stamp !== lastStamp) { lastStamp = stamp; loadDetail(); }
 }, 3000);
+// LLM が書いている途中の内容を 1 秒ごとに取りに行く
+let lastLive = '';
+setInterval(async () => {
+  if (!sel || !document.getElementById('lv-text')) return;
+  let lv;
+  try { lv = await (await fetch(`/api/jobs/${sel}/live`)).json(); } catch (e) { return; }
+  const key = `${lv.active}|${lv.what}|${lv.chunks}`;
+  if (key === lastLive) return;
+  lastLive = key;
+  const sec = lv.started ? Math.round(((lv.active ? Date.now() / 1000 : lv.ended) - lv.started)) : 0;
+  document.getElementById('lv-dot').className = 'live-dot' + (lv.active ? ' on' : '');
+  document.getElementById('lv-what').textContent = lv.what
+    ? `${lv.what}　${sec} 秒・受け取った断片 ${lv.chunks}` + (lv.active ? '' : '（終わった呼び出し）')
+    : '待機中';
+  const th = document.getElementById('lv-thinking'), tx = document.getElementById('lv-text');
+  th.hidden = !lv.thinking;
+  if (lv.thinking) { const atEnd = th.scrollTop + th.clientHeight >= th.scrollHeight - 20; th.textContent = lv.thinking; if (atEnd) th.scrollTop = th.scrollHeight; }
+  const atEnd = tx.scrollTop + tx.clientHeight >= tx.scrollHeight - 20;
+  tx.textContent = lv.text || '';
+  if (atEnd) tx.scrollTop = tx.scrollHeight;   // 読み返しているときは勝手にスクロールしない
+}, 1000);
 loadJobs();
 </script>
 </html>

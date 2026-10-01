@@ -87,35 +87,122 @@ class Job:
         if self.stop:
             raise Stopped()
 
+    # ---- LLM が書いている途中の内容（画面にストリーミング表示する。state.json には保存しない） ----
+    def live_start(self, what):
+        self.live = {'active': True, 'what': what, 'text': '', 'thinking': '', 'chunks': 0, 'started': time.time(), 'ended': None}
+
+    def live_add(self, text='', thinking=''):
+        lv = getattr(self, 'live', None)
+        if not lv:
+            return
+        if text:
+            lv['text'] = (lv['text'] + text)[-30000:]
+        if thinking:
+            lv['thinking'] = (lv['thinking'] + thinking)[-30000:]
+        lv['chunks'] += 1
+
+    def live_end(self):
+        lv = getattr(self, 'live', None)
+        if lv:
+            lv['active'], lv['ended'] = False, time.time()
+
 
 # ---------------------------------------------------------------- LLM
+def _to_ollama(messages):
+    """OpenAI 形式のメッセージ（content に text と image_url を並べる形）を、Ollama の /api/chat の形式に変える"""
+    out = []
+    for m in messages:
+        c = m['content']
+        if isinstance(c, str):
+            out.append({'role': m['role'], 'content': c}); continue
+        text = '\n'.join(x['text'] for x in c if x.get('type') == 'text')
+        imgs = [x['image_url']['url'].split(',', 1)[1] for x in c if x.get('type') == 'image_url']
+        out.append({'role': m['role'], 'content': text, **({'images': imgs} if imgs else {})})
+    return out
+
+
+def _stream(job, req, ollama):
+    """ストリーミングで受け取りながら job.live に書き足す。(本文, 入力トークン数, 出力トークン数) を返す"""
+    content, pin, pout = [], None, None
+    resp = urllib.request.urlopen(req, timeout=7200)
+    for raw in resp:
+        job.check_stop()   # 書いている途中でも「停止」が効くように
+        line = raw.decode('utf-8', 'replace').strip()
+        if not line:
+            continue
+        if ollama:   # Ollama: 1 行 1 JSON
+            d = json.loads(line)
+            m = d.get('message') or {}
+            if m.get('thinking'):
+                job.live_add(thinking=m['thinking'])
+            if m.get('content'):
+                content.append(m['content']); job.live_add(text=m['content'])
+            if d.get('done'):
+                pin, pout = d.get('prompt_eval_count'), d.get('eval_count')
+                break
+        else:        # OpenAI 互換: Server-Sent Events
+            if not line.startswith('data:'):
+                continue
+            data = line[5:].strip()
+            if data == '[DONE]':
+                break
+            d = json.loads(data)
+            if d.get('usage'):
+                pin, pout = d['usage'].get('prompt_tokens'), d['usage'].get('completion_tokens')
+            for ch in d.get('choices') or []:
+                delta = ch.get('delta') or {}
+                th = delta.get('reasoning_content') or delta.get('reasoning')
+                if th:
+                    job.live_add(thinking=th)
+                if delta.get('content'):
+                    content.append(delta['content']); job.live_add(text=delta['content'])
+    return ''.join(content), pin, pout
+
+
 def chat(job, messages, max_tokens=32000, what=''):
+    """LLM を呼ぶ。llm.api が "ollama" なら Ollama の /api/chat（文脈の長さ num_ctx を指定できる）、それ以外は OpenAI 互換 API。
+    ストリーミングで受け取り、書いている途中の内容を画面に出す（job.live）。"""
     cfg = {**DEFAULT_CFG, **(job.state['params'].get('llm') or {})}
-    body = {'model': cfg['model'], 'messages': messages, 'max_tokens': max_tokens, 'temperature': 0.6}
+    ollama = cfg.get('api') == 'ollama'
+    if ollama:
+        url = cfg['url'].rstrip('/')
+        url = url if url.endswith('/api/chat') else url.split('/v1')[0] + '/api/chat'
+        body = {'model': cfg['model'], 'messages': _to_ollama(messages), 'stream': True, 'think': bool(cfg.get('think', False)),
+                'options': {'num_ctx': int(cfg.get('num_ctx', 65536)), 'num_predict': max_tokens, 'temperature': 0.6}}
+    else:
+        url = cfg['url']
+        body = {'model': cfg['model'], 'messages': messages, 'max_tokens': max_tokens, 'temperature': 0.6,
+                'stream': True, 'stream_options': {'include_usage': True}}
     last = None
     for attempt in range(4):
         job.check_stop()
         try:
-            req = urllib.request.Request(cfg['url'], data=json.dumps(body).encode(),
-                                         headers={'Content-Type': 'application/json', 'Authorization': 'Bearer ' + cfg['key']})
+            req = urllib.request.Request(url, data=json.dumps(body).encode(),
+                                         headers={'Content-Type': 'application/json', 'Authorization': 'Bearer ' + (cfg.get('key') or '')})
             t0 = time.time()
-            r = json.load(urllib.request.urlopen(req, timeout=3000))
+            job.live_start(what)
+            try:
+                text, pin, pout = _stream(job, req, ollama)
+            finally:
+                job.live_end()
             dt = time.time() - t0
             with job.lock:
                 job.state['llm_calls'] += 1
                 job.state['llm_seconds'] += dt
-            job.log(f'  DeepSeek {what}: {dt:.0f}秒 / 出力 {r.get("usage", {}).get("completion_tokens", "?")} トークン')
-            return r['choices'][0]['message']['content'] or ''
+            job.log(f'  LLM {what}: {dt:.0f}秒 / 入力 {pin if pin is not None else "?"} / 出力 {pout if pout is not None else "?"} トークン')
+            return text
         except urllib.error.HTTPError as e:
             last = f'HTTP {e.code} {e.read()[:200].decode("utf-8", "replace")}'
             if 400 <= e.code < 500:   # 画像が大きすぎる（GPU メモリ不足）など。同じ内容で再試行しても無駄
-                job.log(f'  DeepSeek エラー: {last}')
+                job.log(f'  LLM エラー: {last}')
                 raise RuntimeError(last)
+        except Stopped:
+            raise
         except Exception as e:
             last = str(e)
-        job.log(f'  DeepSeek エラー（{attempt + 1}回目）: {last}')
+        job.log(f'  LLM エラー（{attempt + 1}回目）: {last}')
         time.sleep(15 * (attempt + 1))
-    raise RuntimeError('DeepSeek に接続できません: ' + (last or ''))
+    raise RuntimeError('LLM に接続できません: ' + (last or ''))
 
 
 def code_block(text, lang='javascript|js'):
@@ -320,8 +407,16 @@ def generate(job):
 - 図の座標は直書きせず、場面ごとに少数の変数（支点の x、板の y、腕の長さ、倍率など）から計算する。ラベルや寸法線もその変数から置く。
   そのうえで、図の部品どうしの関係（「箱の下端 = 板の上面」「L2 の右端 = 箱の中心 x」「ラベルは矢印と重ならない」など）を
   `check('説明', 条件)` で数値として検算する。draw の中で計算する位置は、同じ計算を場面の外の関数にしておき、検算にも使う。"""
-    c = chat(job, [{'role': 'system', 'content': system_prompt()}, {'role': 'user', 'content': task}], what='生成')
+    msgs = [{'role': 'system', 'content': system_prompt()}, {'role': 'user', 'content': task}]
+    c = chat(job, msgs, what='生成')
+    open(job.path('generate_raw.md'), 'w', encoding='utf-8').write(c)
     code = code_block(c)
+    if not code:   # 短い返事だけで終わることがある（ローカルのモデルで確認）。念を押して 1 回だけ書き直させる
+        job.log('  生成結果にコードがなかったので、もう一度書かせる')
+        c = chat(job, msgs + [{'role': 'assistant', 'content': c},
+                              {'role': 'user', 'content': 'scenes.js の全体を ```javascript のコードブロック 1 つで、最後（`];` まで）出力してください。説明は不要です。'}], what='生成（再）')
+        open(job.path('generate_raw2.md'), 'w', encoding='utf-8').write(c)
+        code = code_block(c)
     if not code:
         raise RuntimeError('生成結果にコードが含まれていません')
     open(job.path('scenes.js'), 'w', encoding='utf-8').write(code)

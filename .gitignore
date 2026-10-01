@@ -1,5 +1,7 @@
 # 手元の接続先・API キー（config.example.json をコピーして作る）
 config.json
+config.*.json
+!config.example.json
 # 生成物
 studio/jobs/
 *.log
